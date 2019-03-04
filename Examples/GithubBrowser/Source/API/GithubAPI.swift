@@ -16,7 +16,7 @@ class _GitHubAPI {
     fileprivate init() {
         #if DEBUG
             // Bare-bones logging of which network calls Siesta makes:
-            SiestaLog.Category.enabled = [.network]
+            SiestaLog.Category.enabled = [.network, .cache]
 
             // For more info about how Siesta decides whether to make a network call,
             // and which state updates it broadcasts to the app:
@@ -38,6 +38,17 @@ class _GitHubAPI {
         let jsonDecoder = JSONDecoder()
 
         service.configure {
+            // Cache API results for fast launch & offline access on a per-user basis.
+
+            $0.pipeline[.rawData].cacheUsing {
+                try FileCache<Data>(
+                    poolName: "api.github.com",
+                    dataIsolation: .perUser(identifiedBy: self.username))
+            }
+
+            // Using try? above signals that if we encounter an error trying create a cache directory or generate a
+            // cache isolation key from username, we should simply proceed silently without having a persistent cache.
+
             // Custom transformers can change any response into any other — including errors.
             // Here we replace the default error message with the one provided by the GitHub API (if present).
 
@@ -45,12 +56,28 @@ class _GitHubAPI {
               GitHubErrorMessageExtractor(jsonDecoder: jsonDecoder))
         }
 
+        RemoteImageView.defaultImageService.configure {
+            // Images
+
+            $0.pipeline[.rawData].cacheUsing {
+                try FileCache<Data>(
+                    poolName: "images",
+                    dataIsolation: .sharedByAllUsers)
+            }
+        }
+
+
         // –––––– Resource-specific configuration ––––––
 
         service.configure("/search/**") {
             // Refresh search results after 10 seconds (Siesta default is 30)
             $0.expirationTime = 10
         }
+
+service.configure("**") {
+// Refresh search results after 10 seconds (Siesta default is 30)
+$0.expirationTime = 10000
+}
 
         // –––––– Auth configuration ––––––
 
@@ -115,18 +142,22 @@ class _GitHubAPI {
     // MARK: - Authentication
 
     func logIn(username: String, password: String) {
+        self.username = username
         if let auth = "\(username):\(password)".data(using: String.Encoding.utf8) {
             basicAuthHeader = "Basic \(auth.base64EncodedString())"
         }
     }
 
     func logOut() {
+        username = nil
         basicAuthHeader = nil
     }
 
     var isAuthenticated: Bool {
         return basicAuthHeader != nil
     }
+
+    private var username: String?
 
     private var basicAuthHeader: String? {
         didSet {
