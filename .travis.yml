@@ -2,6 +2,7 @@ branches:
   only:
   - master
   - travis
+  - swift-5
 
 language: objective-c
 os: osx
